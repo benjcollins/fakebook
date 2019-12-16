@@ -1,6 +1,6 @@
 <body bgcolor="#eeeeee">
     <font face="Trebuchet MS, Helvetica, sans-serif">
-        <table align="center" cellpadding="10" cellspacing="0" border="1">
+        <table align="center" cellpadding="10" cellspacing="0" border="0">
 
             <colgroup>
                 <col width="160">
@@ -17,6 +17,7 @@
                 </td>
             </tr>
 
+            {{if .Token}}
             <tr bgcolor="#3a74ba" height="50">
                 <td align="center"><a href="/{{.Token}}/home.html"><font color="#ffffff">Home</font></a></td>
                 <td align="center"><a href="/{{.Token}}/friends.html"><font color="#ffffff">Friends</font></a></td>
@@ -24,6 +25,7 @@
                 <td align="center"><a href="/{{.Token}}/self/profile.html"><font color="#ffffff">Profile</font></a></td>
                 <td align="center"><a href="/login.html"><font color="#ffffff">Log Out</font></a></td>
             </tr>
+            {{end}}
 
             {{template "Content" .}}
 

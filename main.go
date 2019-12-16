@@ -1,6 +1,7 @@
 package main
 
 import (
+	"unicode"
 	"github.com/gorilla/mux"
 	"io/ioutil"
 	"strconv"
@@ -9,183 +10,173 @@ import (
 	"time"
 	"encoding/base64"
 	"crypto/rand"
-	"encoding/gob"
 	"net/http"
 	"html/template"
-	"os"
-	"regexp"
-	"bytes"
 	"crypto/sha1"
 )
 
-type UserHandlerFunc func(w http.ResponseWriter, req *http.Request, user User)
-type TargetUserHandlerFunc func(w http.ResponseWriter, req *http.Request, user User, targetUser User)
+type userHandlerFunc func(w http.ResponseWriter, req *http.Request, user User, token tokenResponse)
+type targetUserHandlerFunc func(w http.ResponseWriter, req *http.Request, user User, token tokenResponse, targetUser User)
 
-type User struct {
-	Name string
-	Username string
-	Password []byte
-	Email string
-	Age int
-	Bio string
-	Picture []byte
+type tokenResponse struct {
+	Token string
 }
 
-type Response struct {
-	Token string
+type errorResponse struct {
+	tokenResponse
 	IsError bool
 	Message string
-	Name string
+}
+
+type loginResponse struct {
+	errorResponse
 	Username string
 	Password string
-	RPassword string
+}
+
+type createAccountResponse struct {
+	errorResponse
+	Name, Username, Password, RPassword string
+}
+
+type profileResponse struct {
+	tokenResponse
 	User User
 }
 
-type Server struct {
-	tokens map[string]Token
+func (res *errorResponse) Throw(message string) {
+	res.IsError = true
+	res.Message = message
 }
 
-type Token struct {
+type server struct {
+	tokens map[string]token
+}
+
+type token struct {
 	username string
 	expires time.Time
 }
 
-func (user User) save() {
-	file, err := os.Create("users/" + user.Username + ".user")
+func (server *server) generateToken(user *User) string {
+	for key, token := range server.tokens {
+		if token.username == user.Username {
+			delete(server.tokens, key)
+		}
+	}
+
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
 	if err != nil {
 		panic(err)
 	}
-	encoder := gob.NewEncoder(file)
-	encoder.Encode(user)
-	file.Close()
-}
 
-func (user *User) load() bool {
-	file, err := os.Open("users/" + user.Username + ".user")
+	tokenID := url.PathEscape(base64.StdEncoding.EncodeToString(b))
 
-	if err != nil {
-		return false
+	server.tokens[tokenID] = token{
+		username: user.Username,
+		expires: time.Now().AddDate(0, 0, 1),
 	}
-
-	gob.NewDecoder(file).Decode(user)
-	return true
+	
+	return tokenID
 }
 
-func (server *Server) handleLogin() http.HandlerFunc {
-	r, _ := regexp.Compile("[^a-zA-Z0-9\\.\\-]")
+func (server *server) handleLogin() http.HandlerFunc {
 	page := template.Must(template.ParseFiles("html/layout.html", "html/login.html"))
 
 	return func(w http.ResponseWriter, req *http.Request) {
 
 		if req.Method == "GET" {
-			page.Execute(w, Response{IsError: false})
+			page.Execute(w, loginResponse{})
 			return
 		}
 
-		username := r.ReplaceAllString(req.FormValue("username"), "_")
+		username := req.FormValue("username")
 		password := req.FormValue("password")
 
-		response := Response{
-			IsError: false,
-			Username: username,
-			Password: password,
-		}
+		res := loginResponse{errorResponse{}, username, password}
 
 		user := &User{Username: username}
-		if !user.load() {
-			response.IsError = true
-			response.Message = "Incorrect username or password!"
-		}
-
-		hash := sha1.New()
-		hash.Write([]byte(password))
-		if !bytes.Equal(hash.Sum(nil), user.Password) {
-			response.IsError = true
-			response.Message = "Incorrect username or password!"
-		}
-
-		if response.IsError {
-			page.Execute(w, response)
+		if !user.load() || !user.auth(password) {
+			res.Throw("Incorrect username or password!")
+			page.Execute(w, res)
 			return
 		}
 
-		for key, token := range server.tokens {
-			if token.username == username {
-				delete(server.tokens, key)
-			}
-		}
-
-		b := make([]byte, 16)
-		_, err := rand.Read(b)
-		if err != nil {
-			panic(err)
-		}
-
-		token := url.PathEscape(base64.StdEncoding.EncodeToString(b))
-		
-		server.tokens[token] = Token{
-			username: username,
-			expires: time.Now().AddDate(0, 0, 1),
-		}
+		token := server.generateToken(user)
 
 		http.Redirect(w, req, "/" + token + "/self/profile.html", http.StatusFound)
 	}
 }
 
-func (server *Server) handleCreateAccount() http.HandlerFunc {
-	r, _ := regexp.Compile("[^a-zA-Z0-9\\.\\-]")
+func (server *server) handleCreateAccount() http.HandlerFunc {
 	page := template.Must(template.ParseFiles("html/layout.html", "html/create-account.html"))
+	picture, err := ioutil.ReadFile("images/default.png")
+	hash := sha1.New()
 
 	return func(w http.ResponseWriter, req *http.Request) {
 
 		if req.Method == "GET" {
-			page.Execute(w, Response{IsError: false})
+			page.Execute(w, createAccountResponse{})
 			return
 		}
 
 		name := req.FormValue("name")
-		username := r.ReplaceAllString(req.FormValue("username"), "_")
+		username := req.FormValue("username")
 		password := req.FormValue("password")
 		rpassword := req.FormValue("rpassword")
 
-		response := Response{
-			IsError: false,
-			Name: name,
-			Username: username,
-			Password: password,
-			RPassword: rpassword,
+		res := createAccountResponse{
+			errorResponse{},
+			name,
+			username,
+			password,
+			rpassword,
 		}
 
 		if name == "" {
-			response.IsError = true
-			response.Message = "Name field cannot be empty!"
-		} else if username == "" {
-			response.IsError = true
-			response.Message = "Username field cannot be empty!"
-		} else if _, e := os.Stat("users/" + username + ".user"); !os.IsNotExist(e) {
-			response.IsError = true
-			response.Message = "This username is already taken!"
-			response.Username = ""
-		} else if password != rpassword {
-			response.IsError = true
-			response.Message = "Passwords do not match!"
-			response.RPassword = ""
-		} else if len(password) < 10 {
-			response.IsError = true
-			response.Message = "Password must be at least 10 characters"
-			response.Password = ""
-			response.RPassword = ""
+			res.Throw("Name field cannot be empty!")
+			page.Execute(w, res)
+			return	
 		}
-
-		if response.IsError {
-			page.Execute(w, response)
+		if username == "" {
+			res.Throw("Username field cannot be empty!")
+			page.Execute(w, res)
+			return
+		}
+		for _, ch := range username {
+			if !unicode.IsDigit(ch) && !unicode.IsLetter(ch) {
+				res.Throw("Username can only contain letters and numbers!")
+				page.Execute(w, res)
+				return
+			}
+		}
+		if !(User{Username: username}).avaliable() {
+			count := 1
+			for !(User{Username: username + strconv.Itoa(count)}).avaliable() {
+				count++
+			}
+			res.Throw("This username is already taken!")
+			res.Username = username + strconv.Itoa(count)
+			page.Execute(w, res)
+			return
+		}
+		if password != rpassword {
+			res.Throw("Passwords do not match!")
+			res.RPassword = ""
+			page.Execute(w, res)
+			return
+		}
+		if len(password) < 10 {
+			res.Throw("Password must be at least 10 characters")
+			res.Password = ""
+			res.RPassword = ""
+			page.Execute(w, res)
 			return
 		}
 
-		hash := sha1.New()
+		hash.Reset()
 		hash.Write([]byte(password))
-		picture, err := ioutil.ReadFile("images/default.png")
 		if err != nil {
 			panic(err)
 		}
@@ -201,19 +192,19 @@ func (server *Server) handleCreateAccount() http.HandlerFunc {
 	}
 }
 
-func (server *Server) handleProfile() TargetUserHandlerFunc {
+func (server *server) handleProfile() targetUserHandlerFunc {
 	editProfilePage := template.Must(template.ParseFiles("html/layout.html", "html/edit-profile.html"))
 	profilePage := template.Must(template.ParseFiles("html/layout.html", "html/profile.html"))
-	return func(w http.ResponseWriter, req *http.Request, user User, targetUser User) {
-		vars := mux.Vars(req)
+
+	return func(w http.ResponseWriter, req *http.Request, user User, token tokenResponse, targetUser User) {
 
 		if req.Method == "GET" {
-			response := Response{Token: vars["token"], User: targetUser}
+			res := profileResponse{token, targetUser}
 			if user.Username == targetUser.Username {
-				editProfilePage.Execute(w, response)
+				editProfilePage.Execute(w, res)
 				return
 			}
-			profilePage.Execute(w, response)
+			profilePage.Execute(w, res)
 			return
 		}
 
@@ -241,14 +232,14 @@ func (server *Server) handleProfile() TargetUserHandlerFunc {
 			user.Bio = bio
 
 			user.save()
-			response := Response{Token: vars["token"], User: user}
-			editProfilePage.Execute(w, response)
+			res := profileResponse{token, user}
+			editProfilePage.Execute(w, res)
 		}
 	}
 }
 
-func (server *Server) handleImage() TargetUserHandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request, user User, targetUser User) {
+func (server *server) handleImage() targetUserHandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request, user User, token tokenResponse, targetUser User) {
 		vars := mux.Vars(req)
 		if vars["name"] == "profile" {
 			w.Write(targetUser.Picture)
@@ -256,27 +247,26 @@ func (server *Server) handleImage() TargetUserHandlerFunc {
 	}
 }
 
-func (server *Server) handleNewPost() UserHandlerFunc {
+func (server *server) handleNewPost() userHandlerFunc {
 	page := template.Must(template.ParseFiles("html/layout.html", "html/new-post.html"))
-	return func(w http.ResponseWriter, req *http.Request, user User) {
-		vars := mux.Vars(req)
+	return func(w http.ResponseWriter, req *http.Request, user User, token tokenResponse) {
 		if req.Method == "GET" {
-			page.Execute(w, Response{Token: vars["token"]})
+			page.Execute(w, token)
 			return
 		}
 	}	
 }
 
-func (server *Server) validateUser(handler func(w http.ResponseWriter, req *http.Request, user User)) http.HandlerFunc {
+func (server *server) validateUser(handler userHandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		vars := mux.Vars(req)
 		token := vars["token"]
 
-		if token, ok := server.tokens[token]; ok {
-			if token.expires.After(time.Now()) {
-				user := User{Username: token.username}
+		if tokenData, ok := server.tokens[token]; ok {
+			if tokenData.expires.After(time.Now()) {
+				user := User{Username: tokenData.username}
 				user.load()
-				handler(w, req, user)
+				handler(w, req, user, tokenResponse{token})
 				return
 			}
 		}
@@ -285,25 +275,26 @@ func (server *Server) validateUser(handler func(w http.ResponseWriter, req *http
 	}
 }
 
-func (server *Server) getTargetUser(handler TargetUserHandlerFunc) UserHandlerFunc {
+func (server *server) getTargetUser(handler targetUserHandlerFunc) userHandlerFunc {
 	page := template.Must(template.ParseFiles("html/layout.html", "html/doesnt-exist.html"))
-	return func(w http.ResponseWriter, req *http.Request, user User) {
+	return func(w http.ResponseWriter, req *http.Request, user User, token tokenResponse) {
 		vars := mux.Vars(req)
-		if vars["username"] == "self" {
-			handler(w, req, user, user)
+		username := vars["username"]
+		if username == "self" {
+			handler(w, req, user, token, user)
 			return
 		}
-		targetUser := User{Username: vars["username"]}
+		targetUser := User{Username: username}
 		if !targetUser.load() {
 			page.Execute(w, targetUser.Username)
 			return
 		}
-		handler(w, req, user, targetUser)
+		handler(w, req, user, token, targetUser)
 	}
 }
 
 func main() {
-	server := &Server{tokens: make(map[string]Token)}
+	server := &server{tokens: make(map[string]token)}
 	router := mux.NewRouter()
 	router.HandleFunc("/login.html", server.handleLogin())
 	router.HandleFunc("/create-account.html", server.handleCreateAccount())
