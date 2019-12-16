@@ -1,0 +1,12 @@
+{{define "Content"}}
+<tr bgcolor="#ffffff" height="200">
+    <td></td>
+    <td colspan="4" align="center">
+        <form method="post" action="/{{.Token}}/new-post.html" enctype="multipart/form-data">
+            <h2>Select Image</h2>
+            <font color="#ffffff">--------------</font><input type="file">
+        </form>
+    </td>
+    <td></td>
+</tr>
+{{end}}

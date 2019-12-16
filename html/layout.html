@@ -1,0 +1,38 @@
+<body bgcolor="#eeeeee">
+    <font face="Trebuchet MS, Helvetica, sans-serif">
+        <table align="center" cellpadding="10" cellspacing="0" border="1">
+
+            <colgroup>
+                <col width="160">
+                <col width="160">
+                <col width="80">
+                <col width="80">
+                <col width="160">
+                <col width="160">
+            </colgroup>
+
+            <tr bgcolor="#3a74ba" height="100" valign="bottom">
+                <td align="center" colspan="6">
+                    <h1><font color="#ffffff">The Fakebook</font></h1>
+                </td>
+            </tr>
+
+            <tr bgcolor="#3a74ba" height="50">
+                <td align="center"><a href="/{{.Token}}/home.html"><font color="#ffffff">Home</font></a></td>
+                <td align="center"><a href="/{{.Token}}/friends.html"><font color="#ffffff">Friends</font></a></td>
+                <td align="center" colspan="2"><a href="/{{.Token}}/trending.html"><font color="#ffffff">Trending</font></a></td>
+                <td align="center"><a href="/{{.Token}}/self/profile.html"><font color="#ffffff">Profile</font></a></td>
+                <td align="center"><a href="/login.html"><font color="#ffffff">Log Out</font></a></td>
+            </tr>
+
+            {{template "Content" .}}
+
+            <tr bgcolor="#3a74ba" height="80">
+                <td align="center" colspan="6">
+                    <p><font color="#ffffff">A Ben Collins Production</font></p>
+                </td>
+            </tr>
+
+        </table>
+    </font>
+</body>
